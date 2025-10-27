@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PDF to Excel Converter & Merger</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    margin: 2rem;
+    background: #f9f9f9;
+    color: #333;
+  }
+  h1 {
+    text-align: center;
+    margin-bottom: 1rem;
+  }
+  #upload-section {
+    border: 2px dashed #aaa;
+    padding: 2rem;
+    text-align: center;
+    background: #fff;
+    margin-bottom: 1rem;
+    cursor: pointer;
+    transition: border-color 0.3s ease;
+  }
+  #upload-section.dragover {
+    border-color: #007bff;
+    background: #e9f5ff;
+  }
+  input[type="file"] {
+    display: none;
+  }
+  button {
+    background-color: #007bff;
+    border: none;
+    color: white;
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-top: 1rem;
+  }
+  button:disabled {
+    background-color: #aaa;
+    cursor: not-allowed;
+  }
+  #status {
+    margin-top: 1rem;
+    min-height: 1.5rem;
+    font-weight: bold;
+    text-align: center;
+  }
+  #file-list {
+    margin-top: 1rem;
+    max-height: 150px;
+    overflow-y: auto;
+    background: #fff;
+    border: 1px solid #ddd;
+    padding: 0.5rem;
+    border-radius: 4px;
+  }
+  #file-list ul {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+  }
+  #file-list li {
+    padding: 0.25rem 0;
+    border-bottom: 1px solid #eee;
+    font-size: 0.9rem;
+  }
+  #file-list li:last-child {
+    border-bottom: none;
+  }
+  footer {
+    margin-top: 3rem;
+    text-align: center;
+    font-size: 0.85rem;
+    color: #666;
+  }
+</style>
+</head>
+<body>
+<h1>PDF to Excel Converter & Merger</h1>
+
+<div id="upload-section" tabindex="0">
+  <p>Drag & Drop PDF files here or <label for="file-input" style="color:#007bff; cursor:pointer; text-decoration: underline;">browse</label></p>
+  <input type="file" id="file-input" accept="application/pdf" multiple />
+</div>
+
+<div id="file-list" aria-live="polite" aria-atomic="true" aria-relevant="additions removals">
+  <ul id="files-ul"></ul>
+</div>
+
+<div style="text-align:center;">
+  <button id="convert-btn" disabled>Convert & Merge to Excel</button>
+</div>
+
+<div id="status" role="status" aria-live="polite"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+  // PDF.js worker setup
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.worker.min.js';
+
+  const uploadSection = document.getElementById('upload-section');
+  const fileInput = document.getElementById('file-input');
+  const convertBtn = document.getElementById('convert-btn');
+  const status = document.getElementById('status');
+  const filesUl = document.getElementById('files-ul');
+
+  let pdfFiles = [];
+
+  function updateFileList() {
+    filesUl.innerHTML = '';
+    pdfFiles.forEach((file, idx) => {
+      const li = document.createElement('li');
+      li.textContent = file.name;
+      filesUl.appendChild(li);
+    });
+    convertBtn.disabled = pdfFiles.length === 0;
+  }
+
+  uploadSection.addEventListener('click', () => fileInput.click());
+
+  uploadSection.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    uploadSection.classList.add('dragover');
+  });
+
+  uploadSection.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    uploadSection.classList.remove('dragover');
+  });
+
+  uploadSection.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadSection.classList.remove('dragover');
+    handleFiles(e.dataTransfer.files);
+  });
+
+  fileInput.addEventListener('change', (e) => {
+    handleFiles(e.target.files);
+    fileInput.value = '';
+  });
+
+  function handleFiles(files) {
+    let newFiles = Array.from(files).filter(f => f.type === 'application/pdf');
+    if (newFiles.length === 0) {
+      alert('Please upload valid PDF files only.');
+      return;
+    }
+    // Avoid duplicates by name and size
+    newFiles.forEach(f => {
+      if (!pdfFiles.some(existing => existing.name === f.name && existing.size === f.size)) {
+        pdfFiles.push(f);
+      }
+    });
+    updateFileList();
+  }
+
+  // Extract text from a PDF page
+  async function extractTextFromPage(page) {
+    const textContent = await page.getTextContent();
+    return textContent.items.map(item => item.str).join(' ');
+  }
+
+  // Extract all text from PDF file
+  async function extractTextFromPDF(file) {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+    let fullText = '';
+    for(let i=1; i<=pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const pageText = await extractTextFromPage(page);
+      fullText += pageText + '\n';
+    }
+    return fullText;
+  }
+
+  // Parse extracted text into tabular data (simple heuristic)
+  // We will try to split lines and columns by spaces or tabs
+  function parseTextToTable(text) {
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    // Try to split each line by multiple spaces or tabs
+    const table = lines.map(line => {
+      // Split by 2 or more spaces or tabs
+      let cols = line.split(/[\t ]{2,}/);
+      if(cols.length === 1){
+        // fallback split by single space if no multiple spaces found
+        cols = line.split(/\s+/);
+      }
+      return cols;
+    });
+    return table;
+  }
+
+  // Merge multiple tables into one sheet (append rows)
+  function mergeTables(tables) {
+    const merged = [];
+    tables.forEach((table, idx) => {
+      if(idx === 0){
+        // Add header row from first table
+        merged.push(...table);
+      } else {
+        // Append rows skipping header row if any
+        // Heuristic: if first row has same length as current table's first row, skip it
+        if(table.length > 0) {
+          const firstRow = table[0];
+          const prevHeader = merged[0];
+          if(firstRow.length === prevHeader.length && firstRow.every((v,i) => v === prevHeader[i])){
+            merged.push(...table.slice(1));
+          } else {
+            merged.push(...table);
+          }
+        }
+      }
+    });
+    return merged;
+  }
+
+  // Convert 2D array to worksheet
+  function arrayToSheet(data) {
+    return XLSX.utils.aoa_to_sheet(data);
+  }
+
+  // Main conversion function
+  async function convertAndMerge() {
+    convertBtn.disabled = true;
+    status.textContent = 'Processing PDFs... This may take a moment.';
+    try {
+      const tables = [];
+      for(let i=0; i<pdfFiles.length; i++) {
+        status.textContent = `Processing file ${i+1} of ${pdfFiles.length}: ${pdfFiles[i].name}`;
+        const text = await extractTextFromPDF(pdfFiles[i]);
+        const table = parseTextToTable(text);
+        tables.push(table);
+      }
+      status.textContent = 'Merging tables...';
+      const mergedTable = mergeTables(tables);
+      const ws = arrayToSheet(mergedTable);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Merged Data');
+      const wbout = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+      const blob = new Blob([wbout], {type:"application/octet-stream"});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'merged_output.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      status.textContent = 'Conversion and merge completed! File downloaded.';
+    } catch (err) {
+      console.error(err);
+      status.textContent = 'Error during conversion: ' + err.message;
+      alert('An error occurred during conversion. See console for details.');
+    } finally {
+      convertBtn.disabled = false;
+    }
+  }
+
+  convertBtn.addEventListener('click', convertAndMerge);
+</script>
+</body>
+</html>
