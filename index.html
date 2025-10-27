@@ -84,12 +84,12 @@
 <body>
 <h1>PDF to Excel Converter & Merger</h1>
 
-<div id="upload-section" tabindex="0">
+<div id="upload-section" tabindex="0" aria-label="PDF file upload area. Drag and drop PDF files here or click to browse.">
   <p>Drag & Drop PDF files here or <label for="file-input" style="color:#007bff; cursor:pointer; text-decoration: underline;">browse</label></p>
   <input type="file" id="file-input" accept="application/pdf" multiple />
 </div>
 
-<div id="file-list" aria-live="polite" aria-atomic="true" aria-relevant="additions removals">
+<div id="file-list" aria-live="polite" aria-atomic="true" aria-relevant="additions removals" aria-label="List of uploaded PDF files">
   <ul id="files-ul"></ul>
 </div>
 
@@ -238,22 +238,35 @@
         const table = parseTextToTable(text);
         tables.push(table);
       }
-      status.textContent = 'Merging tables...';
-      const mergedTable = mergeTables(tables);
-      const ws = arrayToSheet(mergedTable);
+      status.textContent = 'Preparing Excel file...';
+
+      let finalTable;
+      let fileName;
+
+      if (tables.length === 1) {
+        // Single file: save as separate Excel file with original file name (but .xlsx)
+        finalTable = tables[0];
+        fileName = pdfFiles[0].name.replace(/\.pdf$/i, '') + '_converted.xlsx';
+      } else {
+        // Multiple files: merge tables and save as merged_output.xlsx
+        finalTable = mergeTables(tables);
+        fileName = 'merged_output.xlsx';
+      }
+
+      const ws = arrayToSheet(finalTable);
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Merged Data');
+      XLSX.utils.book_append_sheet(wb, ws, 'Data');
       const wbout = XLSX.write(wb, {bookType:'xlsx', type:'array'});
       const blob = new Blob([wbout], {type:"application/octet-stream"});
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'merged_output.xlsx';
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      status.textContent = 'Conversion and merge completed! File downloaded.';
+      status.textContent = `Conversion completed! File "${fileName}" downloaded.`;
     } catch (err) {
       console.error(err);
       status.textContent = 'Error during conversion: ' + err.message;
